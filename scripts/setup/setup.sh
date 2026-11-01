@@ -756,17 +756,17 @@ cd "$FRONTEND_DIR"
 export PATH="$NODE_DIR/bin:$PATH"
 
 if [ "$USE_SYMLINKS" = false ]; then
-  if "$NPM_BIN" install --prefer-offline --no-bin-links; then
+  if "$NPM_BIN" ci --prefer-offline --no-bin-links; then
     print_ok "Dependencies installed!"
   else
-    print_fail "npm install failed."
+    print_fail "npm ci failed."
     exit 1
   fi
 else
-  if "$NPM_BIN" install --prefer-offline; then
+  if "$NPM_BIN" ci --prefer-offline; then
     print_ok "Dependencies installed!"
   else
-    print_fail "npm install failed."
+    print_fail "npm ci failed."
     exit 1
   fi
 fi
