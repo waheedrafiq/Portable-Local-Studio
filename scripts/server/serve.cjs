@@ -5363,6 +5363,99 @@ function describeDownloadHttpError(statusCode, url, headers = {}) {
 
 const MODEL_FILE_URL_HINT = "Use a direct link to a single model file ending in .safetensors, .gguf or .ckpt. On Hugging Face, open the repository's Files tab and copy the download link of one file.";
 
+function sanitizeDownloadFilename(filename, fallback = "model.bin") {
+  const raw = String(filename || fallback).trim();
+  const base = path.basename(raw || fallback);
+  const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+  return cleaned || fallback;
+}
+
+// Best-effort public-host filtering: we intentionally reject obvious private/loopback and IPv4-mapped IPv6 addresses,
+// but a full defense against DNS rebinding / TOCTOU requires a pinned trusted resolver or allowlist. We fail closed on
+// any host that is clearly private or on an ambiguous resolution result.
+function isPrivateOrLocalHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost")) return true;
+
+  if (host.startsWith("::ffff:")) {
+    return isPrivateOrLocalHost(host.slice(7));
+  }
+
+  if (net.isIP(host) === 4) {
+    const [a, b] = host.split(".").map((part) => Number(part));
+    return a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a >= 224;
+  }
+  if (net.isIP(host) === 6) {
+    if (host === "::1" || host === "::" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:")) return true;
+    return false;
+  }
+  return false;
+}
+
+function validateZipArchiveEntries(zipPath, rootDir) {
+  const unzipList = spawnSync("unzip", ["-Z", "-1", zipPath], {
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (unzipList.error) {
+    throw unzipList.error;
+  }
+  if (unzipList.status !== 0) {
+    throw new Error(`Archive listing failed for ${zipPath}: ${unzipList.stderr || unzipList.stdout || "unknown error"}`.trim());
+  }
+
+  const entries = unzipList.stdout
+    .split(/\r?\n/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (!entries.length) {
+    throw new Error("Archive is empty.");
+  }
+
+  const seenTargets = new Set();
+  const resolvedRoot = path.resolve(rootDir);
+  for (const entry of entries) {
+    const normalized = entry.replace(/\\/g, "/").replace(/^\.\//, "");
+    if (!normalized || normalized === "." || normalized === ".." || normalized.startsWith("/") || normalized.startsWith("\\") || /^[A-Za-z]:/.test(normalized)) {
+      throw new Error(`Archive contains an invalid member path: ${entry}`);
+    }
+    const parts = normalized.split("/").filter((part) => part && part !== ".");
+    if (parts.some((part) => part === "..")) {
+      throw new Error(`Archive member escapes the extraction directory: ${entry}`);
+    }
+    const resolved = path.resolve(resolvedRoot, ...parts);
+    if (!pathInside(resolved, resolvedRoot)) {
+      throw new Error(`Archive member escapes the extraction directory: ${entry}`);
+    }
+    if (seenTargets.has(resolved)) {
+      throw new Error(`Archive contains duplicate output paths: ${entry}`);
+    }
+    seenTargets.add(resolved);
+  }
+
+  const symlinkCheck = spawnSync("unzip", ["-Z", "-v", zipPath], {
+    encoding: "utf8",
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024,
+  });
+  if (symlinkCheck.error || symlinkCheck.status !== 0) {
+    throw new Error("Archive symlink inspection failed. Refusing to extract archive.");
+  }
+
+  const symlinkOutput = symlinkCheck.stdout || "";
+  if (/Unix file attributes .*?:\s*lrwx/i.test(symlinkOutput) || /\blrwxrwxrwx\b/i.test(symlinkOutput) || /symbolic link/i.test(symlinkOutput)) {
+    throw new Error("Archive contains symlinks and cannot be extracted safely.");
+  }
+}
+
 // Rejects URLs that point at a web page instead of a downloadable file, e.g. a
 // Hugging Face repository page, which otherwise "downloads" as a small HTML file.
 function getModelDownloadUrlIssue(url) {
@@ -5373,12 +5466,16 @@ function getModelDownloadUrlIssue(url) {
     return "That is not a valid URL.";
   }
   if (!/^https?:$/.test(parsed.protocol)) return "Only http(s) download URLs are supported.";
+  if (isPrivateOrLocalHost(parsed.hostname)) {
+    return "Only public model URLs are allowed. Local, private, and loopback hosts are blocked.";
+  }
   if (/(^|\.)huggingface\.co$/i.test(parsed.hostname)) {
     const parts = parsed.pathname.split("/").filter(Boolean);
     const isFileUrl = parts.includes("resolve") || parts.includes("blob");
     if (!isFileUrl) return `That URL is a Hugging Face repository page, not a model file. ${MODEL_FILE_URL_HINT}`;
   }
-  if (!path.extname(path.basename(parsed.pathname))) {
+  const filename = sanitizeDownloadFilename(path.basename(parsed.pathname), "model.bin");
+  if (!path.extname(filename)) {
     return `That URL does not point to a model file (no file extension). ${MODEL_FILE_URL_HINT}`;
   }
   return "";
@@ -5395,18 +5492,31 @@ function startModelDownload(url, overrideFilename = null, targetDir = MODELS, ki
     url = url.replace("/blob/", "/resolve/");
   }
 
-  let filename = overrideFilename;
+  try {
+    const parsedUrl = new URL(String(url || "").trim());
+    if (!/^https?:$/.test(parsedUrl.protocol) || isPrivateOrLocalHost(parsedUrl.hostname)) {
+      throw new Error("Only public http(s) model URLs are allowed.");
+    }
+  } catch (err) {
+    throw new Error(err.message || "That is not a valid download URL.");
+  }
+
+  let filename = overrideFilename ? sanitizeDownloadFilename(overrideFilename, "model.bin") : null;
   if (!filename) {
     filename = "model.gguf";
     try {
       const parsed = new URL(url);
-      filename = path.basename(parsed.pathname);
+      filename = sanitizeDownloadFilename(path.basename(parsed.pathname), "model.gguf");
     } catch (e) {
       console.error("Failed to parse URL filename:", e);
     }
   }
 
-  const destPath = path.join(targetDir, filename);
+  const resolvedTarget = path.resolve(targetDir);
+  const destPath = path.join(resolvedTarget, filename);
+  if (!pathInside(destPath, resolvedTarget)) {
+    throw new Error("Download destination is invalid.");
+  }
   const tempPath = `${destPath}.part`;
   try { fs.unlinkSync(tempPath); } catch (_) {}
   downloadState = {
@@ -5462,6 +5572,16 @@ function startModelDownload(url, overrideFilename = null, targetDir = MODELS, ki
       const redirectUrl = response.headers.location ? new URL(response.headers.location, url).toString() : "";
       if (!redirectUrl) {
         failDownload("Redirect response did not include a Location header");
+        return;
+      }
+      try {
+        const parsedRedirect = new URL(redirectUrl);
+        if (!/^https?:$/.test(parsedRedirect.protocol) || isPrivateOrLocalHost(parsedRedirect.hostname)) {
+          failDownload("Redirected model URL is not public and cannot be used.");
+          return;
+        }
+      } catch (err) {
+        failDownload(err.message || "Redirected model URL is invalid.");
         return;
       }
       if (redirectCount > 10) {
@@ -5560,11 +5680,34 @@ function startModelDownload(url, overrideFilename = null, targetDir = MODELS, ki
 
           if (destPath.toLowerCase().endsWith(".zip")) {
             try {
-              const { execSync } = require("child_process");
-              execSync(`unzip -o "${destPath}" -d "${path.dirname(destPath)}"`, { stdio: "ignore" });
-              fs.unlinkSync(destPath);
-            } catch(err) {
-              console.error("Failed to unzip", err);
+              const unzipTarget = path.dirname(destPath);
+              const stagingDir = path.join(unzipTarget, `.${path.basename(destPath, ".zip")}-staging-${process.pid}-${Date.now()}`);
+              fs.mkdirSync(stagingDir, { recursive: true });
+              try {
+                validateZipArchiveEntries(destPath, stagingDir);
+                const unzipResult = spawnSync("unzip", ["-q", destPath, "-d", stagingDir], { stdio: "ignore", windowsHide: true });
+                if (unzipResult.status !== 0) {
+                  throw new Error(`unzip exited with status ${unzipResult.status ?? "unknown"}`);
+                }
+                const stagedFiles = listFilesRecursive(stagingDir);
+                for (const stagedFile of stagedFiles) {
+                  const relativePath = path.relative(stagingDir, stagedFile);
+                  const finalPath = path.resolve(unzipTarget, relativePath);
+                  if (!pathInside(finalPath, unzipTarget)) {
+                    throw new Error(`Archive member escapes the extraction directory: ${relativePath}`);
+                  }
+                  if (fs.existsSync(finalPath)) {
+                    throw new Error(`Archive would overwrite existing file: ${relativePath}`);
+                  }
+                  fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+                  fs.copyFileSync(stagedFile, finalPath);
+                }
+                fs.unlinkSync(destPath);
+              } finally {
+                try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch (_) {}
+              }
+            } catch (err) {
+              throw new Error(`Archive extraction failed safely: ${err.message || String(err)}`);
             }
           }
 

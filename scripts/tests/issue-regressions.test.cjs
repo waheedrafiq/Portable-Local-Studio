@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { pathToFileURL } = require("node:url");
@@ -249,4 +251,80 @@ test("launchers update a stale llama.cpp backend so existing installs get backen
   // The release the updater compares against must be the one setup-llama actually installs.
   assert.match(read("scripts/setup/setup-llama.sh"), /^RELEASE="\$\{LLAMA_RELEASE:-b\d+\}"$/m);
   assert.match(read("scripts/setup/setup-llama.ps1"), /param\(\[string\]\$Release = "b\d+"\)/);
+});
+
+function loadDownloadGuardFunctions() {
+  const source = read("scripts/server/serve.cjs");
+  const start = source.indexOf("function sanitizeDownloadFilename");
+  const end = source.indexOf("function getModelDownloadUrlIssue");
+  const snippet = source.slice(start, end);
+  const pathInside = (childPath, parentPath) => {
+    const relative = path.relative(path.resolve(parentPath), path.resolve(childPath));
+    return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+  };
+  const evaluate = new Function("path", "fs", "net", "spawnSync", "console", "pathInside", `${snippet}; return { sanitizeDownloadFilename, isPrivateOrLocalHost, validateZipArchiveEntries };`);
+  return evaluate(path, fs, require("node:net"), spawnSync, console, pathInside);
+}
+
+function createZipArchive(entries) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "download-guard-"));
+  const zipPath = path.join(dir, "payload.zip");
+  const python = `
+import json, stat, sys, zipfile
+entries = json.loads(sys.argv[2])
+with zipfile.ZipFile(sys.argv[1], 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+    for item in entries:
+        if item.get('type') == 'symlink':
+            info = zipfile.ZipInfo(item['name'])
+            info.create_system = 3
+            info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            zf.writestr(info, item['target'])
+        else:
+            zf.writestr(item['name'], item.get('data', ''))
+`;
+  const result = spawnSync("python3", ["-c", python, zipPath, JSON.stringify(entries)], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout || "zip creation failed");
+  return zipPath;
+}
+
+test("download guard rails reject malicious filenames and archive payloads", () => {
+  const server = read("scripts/server/serve.cjs");
+  assert.match(server, /function sanitizeDownloadFilename/);
+  assert.match(server, /Only public model URLs are allowed/);
+  assert.match(server, /function validateZipArchiveEntries/);
+  assert.match(server, /Archive member escapes the extraction directory/);
+  assert.match(server, /Archive contains symlinks and cannot be extracted safely/);
+  assert.match(server, /spawnSync\("unzip", \["-q", destPath, "-d", stagingDir\]/);
+
+  const { sanitizeDownloadFilename, isPrivateOrLocalHost, validateZipArchiveEntries } = loadDownloadGuardFunctions();
+  assert.equal(sanitizeDownloadFilename("../../etc/passwd"), "passwd");
+  assert.equal(isPrivateOrLocalHost("::ffff:127.0.0.1"), true);
+  assert.equal(isPrivateOrLocalHost("::ffff:8.8.8.8"), false);
+
+  const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "download-guard-validate-"));
+  const goodArchive = createZipArchive([
+    { name: "safe/model.gguf", data: "valid-model" },
+    { name: "nested/extra.txt", data: "extra" },
+  ]);
+  const traversalArchive = createZipArchive([
+    { name: "safe/model.gguf", data: "valid-model" },
+    { name: "../escape.bin", data: "bad" },
+  ]);
+  const duplicateArchive = createZipArchive([
+    { name: "dupe.bin", data: "first" },
+    { name: "dupe.bin", data: "second" },
+  ]);
+  const symlinkArchive = createZipArchive([
+    { name: "link.txt", type: "symlink", target: "../escape.bin" },
+  ]);
+
+  assert.doesNotThrow(() => validateZipArchiveEntries(goodArchive, stagingRoot));
+  assert.throws(() => validateZipArchiveEntries(traversalArchive, stagingRoot), /Archive member escapes the extraction directory/);
+  assert.throws(() => validateZipArchiveEntries(duplicateArchive, stagingRoot), /Archive contains duplicate output paths/);
+  assert.throws(() => validateZipArchiveEntries(symlinkArchive, stagingRoot), /Archive contains symlinks/);
+
+  for (const archive of [goodArchive, traversalArchive, duplicateArchive, symlinkArchive]) {
+    try { fs.rmSync(archive, { force: true }); } catch (_) {}
+  }
+  try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch (_) {}
 });
