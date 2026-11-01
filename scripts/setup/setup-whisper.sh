@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/download-verification.sh"
 ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 APP_DIR="$ROOT_DIR/app"
 TOOLS_DIR="$APP_DIR/tools"
@@ -27,12 +28,16 @@ download_and_extract() {
   mkdir -p "$TOOLS_DIR" "$dest"
   rm -f "$archive" "$archive.part"
   echo "   >>   Downloading $asset"
-  curl -fSL --progress-bar "$url" -o "$archive.part"
-  mv "$archive.part" "$archive"
-  if command -v python3 >/dev/null 2>&1; then
-    python3 "$SCRIPT_DIR/extract_tar.py" --archive "$archive" --dest "$dest" --strip-components=1
+  if [[ "$PLATFORM" == "Linux" ]]; then
+    download_verified "$url" "$archive" || return 1
   else
-    tar -xzf "$archive" -C "$dest" --strip-components=1
+    curl -fSL --progress-bar "$url" -o "$archive.part" || return 1
+    mv "$archive.part" "$archive" || return 1
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 "$SCRIPT_DIR/extract_tar.py" --archive "$archive" --dest "$dest" --strip-components=1 || return 1
+  else
+    tar -xzf "$archive" -C "$dest" --strip-components=1 || return 1
   fi
   rm -f "$archive"
   chmod +x "$dest"/whisper-* "$dest"/main "$dest"/server 2>/dev/null || true

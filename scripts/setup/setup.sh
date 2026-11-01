@@ -7,6 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/download-verification.sh"
 ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 APP_DIR="$ROOT_DIR/app"
 FRONTEND_DIR="$APP_DIR/frontend"
@@ -113,13 +114,16 @@ download_file() {
   local tmp_dest="${dest}.part"
   rm -f "$tmp_dest"
 
-  curl -fSL --progress-bar "$url" -o "$tmp_dest" || {
-    print_fail "Download failed: $url"
-    rm -f "$tmp_dest"
-    return 1
-  }
-
-  mv "$tmp_dest" "$dest"
+  if [[ "$PLATFORM" == "Linux" ]]; then
+    download_verified "$url" "$dest" || return 1
+  else
+    curl -fSL --progress-bar "$url" -o "$tmp_dest" || {
+      print_fail "Download failed: $url"
+      rm -f "$tmp_dest"
+      return 1
+    }
+    mv "$tmp_dest" "$dest" || return 1
+  fi
   echo ""
   local fsize
   fsize="$(stat -c%s "$dest" 2>/dev/null || stat -f%z "$dest" 2>/dev/null || echo 0)"
@@ -569,14 +573,14 @@ if [[ "$VENDOR" == "nvidia" ]]; then
         
         print_info "Testing downloaded prebuilt CUDA binary..."
         if "$CUDA_BACKEND_DIR/sd-server-cuda" --help >/dev/null 2>&1; then
-          print_ok "Prebuilt CUDA binary verified and works! Skipping compilation."
+          print_ok "Prebuilt CUDA binary passed SHA-256 and runtime checks. Skipping compilation."
           TRY_DOWNLOAD=0
         else
-          print_warn "Prebuilt CUDA binary failed verification test (missing libraries or library mismatch)."
+          print_warn "Prebuilt CUDA binary failed runtime test (missing libraries or library mismatch)."
           rm -f "$CUDA_BACKEND_DIR/sd-server-cuda" "$CUDA_BACKEND_DIR/sd-cuda"
         fi
       else
-        print_warn "Failed to download prebuilt CUDA binary."
+        print_warn "Failed to download or verify prebuilt CUDA binary."
         rm -f "$CUDA_BACKEND_DIR/sd-server-cuda" "$CUDA_BACKEND_DIR/sd-cuda"
       fi
       

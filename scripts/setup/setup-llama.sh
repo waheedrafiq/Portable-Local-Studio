@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/download-verification.sh"
 ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 APP_DIR="$ROOT_DIR/app"
 TOOLS_DIR="$APP_DIR/tools"
@@ -30,14 +31,19 @@ download_and_extract() {
   mkdir -p "$TOOLS_DIR" "$dest"
   rm -f "$archive" "$archive.part"
   echo "   >>   Downloading $asset"
-  curl -fSL --progress-bar "$url" -o "$archive.part"
-  mv "$archive.part" "$archive"
-  # Clear the previous release only after the new archive downloaded, so a failed update keeps the old backend.
+  if [[ "$PLATFORM" == "Linux" ]]; then
+    # Status 2 tells the optional wrapper that the old backend is still intact.
+    download_verified "$url" "$archive" || return 2
+  else
+    curl -fSL --progress-bar "$url" -o "$archive.part" || return 1
+    mv "$archive.part" "$archive" || return 1
+  fi
+  # Keep the previous release until the new archive has passed verification.
   find "$dest" -mindepth 1 -delete 2>/dev/null || true
   if command -v python3 >/dev/null 2>&1; then
-    python3 "$SCRIPT_DIR/extract_tar.py" --archive "$archive" --dest "$dest" --strip-components=1
+    python3 "$SCRIPT_DIR/extract_tar.py" --archive "$archive" --dest "$dest" --strip-components=1 || return 1
   else
-    tar -xzf "$archive" -C "$dest" --strip-components=1
+    tar -xzf "$archive" -C "$dest" --strip-components=1 || return 1
   fi
   rm -f "$archive"
   chmod +x "$dest"/llama-* 2>/dev/null || true
@@ -53,6 +59,7 @@ download_and_extract_optional() {
   local asset="$1"
   local dest="$2"
   local reason="$3"
+  local status
 
   if [[ -x "$dest/llama-server" && "$(cat "$dest/.llama-release" 2>/dev/null || true)" == "$RELEASE" ]]; then
     echo "   OK   optional llama.cpp backend already ready: $dest"
@@ -61,10 +68,16 @@ download_and_extract_optional() {
 
   if download_and_extract "$asset" "$dest"; then
     return 0
+  else
+    status=$?
   fi
 
   echo "   !!   Skipping optional llama.cpp backend for $reason ($asset)" >&2
-  rm -rf "$dest"
+  # A download/verification failure must not delete a previously installed backend.
+  # Other failures retain the existing cleanup of incomplete extractions.
+  if [[ "$status" -ne 2 ]]; then
+    rm -rf "$dest"
+  fi
   return 0
 }
 

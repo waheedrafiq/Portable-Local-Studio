@@ -1,0 +1,28 @@
+# Audited 2026-11-01. Expected hashes are published upstream, never derived locally.
+# Format: SHA-256  exact HTTPS download URL
+# Provenance and trust limits: ../../docs/linux-download-audit.md
+
+# Node.js v22.12.0: https://nodejs.org/dist/v22.12.0/SHASUMS256.txt
+22982235e1b71fa8850f82edd09cdae7e3f32df1764a9ec298c72d25ef2c164f  https://nodejs.org/dist/v22.12.0/node-v22.12.0-linux-x64.tar.xz
+
+# GitHub release API digest: https://api.github.com/repos/leejet/stable-diffusion.cpp/releases/336114480
+71825db98299be2f1be78a8f141b2470e9c16f46a769738166e22a2878ff8487  https://github.com/leejet/stable-diffusion.cpp/releases/download/master-685-19bdfe2/sd-master-19bdfe2-bin-Linux-Ubuntu-24.04-x86_64-rocm-7.13.0.zip
+721e2d12106889c381d6d015e90debc5b209f2ca92b37c9a4bd53778ad599cf2  https://github.com/leejet/stable-diffusion.cpp/releases/download/master-685-19bdfe2/sd-master-19bdfe2-bin-Linux-Ubuntu-24.04-x86_64-vulkan.zip
+179759f4d1d181c85e1cc71739345328e7a747d960b8f6edde028daec96ea5c1  https://github.com/leejet/stable-diffusion.cpp/releases/download/master-685-19bdfe2/sd-master-19bdfe2-bin-Linux-Ubuntu-24.04-x86_64.zip
+
+# GitHub release API digest: https://api.github.com/repos/ggml-org/llama.cpp/releases/403780070
+b1b08cfdd51409347cd3d40c03b163f689a6ed3b6cb740adfa7624d8fac1329f  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-arm64.tar.gz
+daddebf5602ce3fbdfc8744200a7f81a7ead5b33278cb5065fc2df1a8013a86e  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-cuda-12.8-x64.tar.gz
+6258645b754f0085e19944ebbe4c7819d4239c3a1d8da5b206205087f78d8237  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-rocm-10.0-x64.tar.gz
+67b2be8612c99cff79eb80e01693cf933c5520332cc0771c9d3a29fec2807ca7  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-sycl-fp32-x64.tar.gz
+8876383d896ccb73908a2bb6a6f344e1c934f74bf886add7996948b211175ede  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-vulkan-arm64.tar.gz
+559ce9bbddd74f2cf99d81a24fc3746b26765e82391fa2d60751a12abc02fd71  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-vulkan-x64.tar.gz
+828f21de3c50f47bf7af0a667f535a486360000fc2f592de40936f1278c1e6d4  https://github.com/ggml-org/llama.cpp/releases/download/b11418/llama-b11418-bin-ubuntu-x64.tar.gz
+
+# GitHub release API digest: https://api.github.com/repos/ggml-org/whisper.cpp/releases/341768502
+e0b66cd551ff6f2a28fabe3c6e89691eea037bb76833493abb9a71ca788994b3  https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-ubuntu-arm64.tar.gz
+f3bf3b4369a99b54665b0f19b88483b30de27f25963b0414235dea03198515c5  https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-ubuntu-x64.tar.gz
+
+# GitHub release API digest: https://api.github.com/repos/leaxer-ai/leaxer-stable-diffusion/releases/280043748
+13097a3885732bc8c0571f0c3d22d4d133acdb76f7a7ba16d491b0f4f04d2db5  https://github.com/leaxer-ai/leaxer-stable-diffusion/releases/download/v0.1.0/sd-server-x86_64-unknown-linux-gnu-cuda
+1409e5d285c874aef362824adb5f28f9c5a68d1a65a1333c093eb81bafb70a44  https://github.com/leaxer-ai/leaxer-stable-diffusion/releases/download/v0.1.0/sd-x86_64-unknown-linux-gnu-cuda
