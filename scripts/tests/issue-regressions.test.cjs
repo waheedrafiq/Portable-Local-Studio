@@ -328,3 +328,33 @@ test("download guard rails reject malicious filenames and archive payloads", () 
   }
   try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch (_) {}
 });
+
+test("Linux launcher does not kill port owners and prefers a safe backend port", () => {
+  const launcher = read("linux.sh");
+  const server = read("scripts/server/serve.cjs");
+
+  assert.match(launcher, /BACKEND_PORT="\$\{BACKEND_PORT:-28088\}"/);
+  assert.match(launcher, /export BACKEND_PORT="\$BACKEND_PORT"/);
+  assert.match(launcher, /is_port_in_use\(\)\s*\{/);
+  assert.match(launcher, /resolve_frontend_port/);
+  assert.doesNotMatch(launcher, /lsof\s+-t[^;\n]*\|\s*xargs\s+kill\s+-9/);
+  assert.doesNotMatch(launcher, /fuser\s+-k/);
+
+  assert.match(server, /process\.env\.BACKEND_PORT\s*\|\|\s*process\.env\.SD_BACKEND_PORT/);
+  assert.match(server, /process\.platform === "linux" \? 28088 : 8080/);
+  assert.match(server, /PORT_BACKEND = osPlatform === "linux"\s*\? await findAvailableBackendPort\(\)/);
+  assert.match(server, /Preferred port \$\{PREFERRED_BACKEND_PORT\} is busy; using \$\{port\} instead/);
+  assert.match(server, /No free backend port found/);
+
+  const configStart = server.indexOf("function readPort");
+  const configEnd = server.indexOf("const PREFERRED_LLM_PORT");
+  const config = server.slice(configStart, configEnd);
+  const getPreferredPort = (env, platform) => new Function(
+    "process",
+    `${config}; return PREFERRED_BACKEND_PORT;`,
+  )({ env, platform });
+  assert.equal(getPreferredPort({ BACKEND_PORT: "28088" }, "linux"), 28088);
+  assert.equal(getPreferredPort({ BACKEND_PORT: "29444" }, "linux"), 29444);
+  assert.equal(getPreferredPort({}, "linux"), 28088);
+  assert.equal(getPreferredPort({}, "win32"), 8080);
+});

@@ -27,6 +27,7 @@ SETUP_SCRIPT="$SCRIPT_DIR/scripts/setup/setup.sh"
 SERVE_SCRIPT="$SCRIPT_DIR/scripts/server/serve.cjs"
 
 FRONTEND_PORT="${FRONTEND_PORT:-1420}"
+BACKEND_PORT="${BACKEND_PORT:-28088}"
 LLM_PORT="${LLM_PORT:-10086}"
 SETUP_REASON=""
 SETUP_MODE="Repair"
@@ -201,15 +202,6 @@ if [[ -n "$SETUP_REASON" ]]; then
   echo ""
   read -rp "  Press Enter to continue, or Ctrl+C to cancel."
 
-  # Clear managed backend ports before setup. Do not kill the frontend port;
-  # launch will select a free frontend port automatically.
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -t -i:8080 -i:"${LLM_PORT}" | xargs kill -9 >/dev/null 2>&1 || true
-  elif command -v fuser >/dev/null 2>&1; then
-    fuser -k "8080/tcp" >/dev/null 2>&1 || true
-    fuser -k "${LLM_PORT}/tcp" >/dev/null 2>&1 || true
-  fi
-
   if ! bash "$SETUP_SCRIPT" $MAX_PERF_FLAG; then
     echo ""
     echo "  [ERROR] Setup failed. Please check the output above."
@@ -237,18 +229,11 @@ if [[ "$FRONTEND_PORT" != "$REQUESTED_FRONTEND_PORT" ]]; then
   echo "  Frontend port ${REQUESTED_FRONTEND_PORT} is busy; using ${FRONTEND_PORT} instead."
 fi
 
-# Clear managed backend ports
-if command -v lsof >/dev/null 2>&1; then
-  lsof -t -i:8080 -i:"${LLM_PORT}" | xargs kill -9 >/dev/null 2>&1 || true
-elif command -v fuser >/dev/null 2>&1; then
-  fuser -k "8080/tcp" >/dev/null 2>&1 || true
-  fuser -k "${LLM_PORT}/tcp" >/dev/null 2>&1 || true
-fi
-
 # Start the server
 echo "  Starting Uncensored AI Studio..."
 export PATH="$NODE_DIR/bin:$PATH"
 export FRONTEND_PORT="$FRONTEND_PORT"
+export BACKEND_PORT="$BACKEND_PORT"
 
 # Run server in background and capture PID
 "$NODE_BIN" "$SERVE_SCRIPT" &
@@ -269,7 +254,7 @@ echo ""
 echo "  ============================================================"
 echo "   Running!"
 echo "   Web UI:     http://localhost:${FRONTEND_PORT}"
-echo "   GPU API:    Auto-selected by the app (starts at 8080)"
+echo "   GPU API:    Preferred port ${BACKEND_PORT} (auto-selects if busy)"
 echo "   Text API:   Starts when a GGUF model is loaded (port ${LLM_PORT})"
 echo "   Speech:     Managed locally by the app"
 echo "   TTS:        Managed locally by the app"

@@ -30,7 +30,10 @@ function readPort(value, fallback) {
 }
 
 const PORT_FRONTEND = readPort(process.env.PORT || process.env.FRONTEND_PORT, 1420);
-const PREFERRED_BACKEND_PORT = readPort(process.env.BACKEND_PORT || process.env.SD_BACKEND_PORT, 8080);
+const PREFERRED_BACKEND_PORT = readPort(
+  process.env.BACKEND_PORT || process.env.SD_BACKEND_PORT,
+  process.platform === "linux" ? 28088 : 8080,
+);
 const PREFERRED_LLM_PORT = readPort(process.env.LLM_PORT, 10086);
 const PREFERRED_SPEECH_PORT = readPort(process.env.SPEECH_PORT, 10088);
 const PREFERRED_TTS_PORT = readPort(process.env.TTS_PORT, 10089);
@@ -4724,7 +4727,11 @@ async function startBackend(settings = {}) {
     throw new Error(modelLoadIssue);
   }
 
-  PORT_BACKEND = Number(settings.backendPort) > 0 ? Number(settings.backendPort) : await findAvailableBackendPort();
+  // On Linux, use the configured environment preference and probe for a free port.
+  // Ignore stale backendPort values that could point at an unrelated local service.
+  PORT_BACKEND = osPlatform === "linux"
+    ? await findAvailableBackendPort()
+    : Number(settings.backendPort) > 0 ? Number(settings.backendPort) : await findAvailableBackendPort();
 
   const resolvedBackendType = resolveBackendType(currentSettings.useGpu, currentSettings.backendType, currentSettings.model);
   currentSettings.backendType = resolvedBackendType;
